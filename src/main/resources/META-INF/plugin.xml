@@ -873,6 +873,14 @@
                          level="ERROR"
                          hasStaticDescription="true"
                          implementationClass="com.demonwav.mcdev.platform.mixin.inspection.MixinAnnotationTargetInspection"/>
+        <localInspection displayName="Unresolved mixin annotation target"
+                         shortName="MixinTypeMismatch"
+                         groupName="Mixin"
+                         language="JAVA"
+                         enabledByDefault="true"
+                         level="ERROR"
+                         hasStaticDescription="true"
+                         implementationClass="com.demonwav.mcdev.platform.mixin.inspection.MixinTypeMismatchInspection"/>
         <!--endregion-->
 
         <!--region Added Members Inspections -->
