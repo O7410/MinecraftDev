@@ -830,6 +830,14 @@
                          level="ERROR"
                          hasStaticDescription="true"
                          implementationClass="com.demonwav.mcdev.platform.mixin.inspection.MixinTargetInspection"/>
+        <localInspection displayName="Duplicate @Mixin target"
+                         shortName="DuplicateMixinTarget"
+                         groupName="Mixin"
+                         language="JAVA"
+                         enabledByDefault="true"
+                         level="WEAK WARNING"
+                         hasStaticDescription="true"
+                         implementationClass="com.demonwav.mcdev.platform.mixin.inspection.MixinDuplicateTargetInspection"/>
         <localInspection displayName="Invalid @Mixin super class"
                          shortName="MixinSuperClass"
                          groupName="Mixin"
