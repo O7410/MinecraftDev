@@ -28,22 +28,27 @@ import com.demonwav.mcdev.util.computeStringArray
 import com.demonwav.mcdev.util.constantStringValue
 import com.demonwav.mcdev.util.findModule
 import com.demonwav.mcdev.util.resolveClass
-import com.demonwav.mcdev.util.resolveClassArray
 import com.intellij.codeInsight.intention.QuickFixFactory
+import com.intellij.codeInspection.LocalQuickFix
+import com.intellij.codeInspection.LocalQuickFixAndIntentionActionOnPsiElement
 import com.intellij.codeInspection.ProblemsHolder
+import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.project.Project
 import com.intellij.psi.JavaElementVisitor
 import com.intellij.psi.PsiAnnotation
 import com.intellij.psi.PsiArrayInitializerMemberValue
 import com.intellij.psi.PsiClass
+import com.intellij.psi.PsiClassObjectAccessExpression
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiElementVisitor
 import com.intellij.psi.PsiExpression
+import com.intellij.psi.PsiFile
+import org.jetbrains.plugins.groovy.intentions.style.inference.resolve
 import org.objectweb.asm.tree.ClassNode
 
 class MixinDuplicateTargetInspection : MixinInspection() {
 
-    override fun getStaticDescription() =
-        "Targeting the same class multiple times in a mixin is redundant"
+    override fun getStaticDescription() = "Targeting the same class multiple times in a mixin is redundant"
 
     override fun buildVisitor(holder: ProblemsHolder): PsiElementVisitor = Visitor(holder)
 
@@ -52,94 +57,122 @@ class MixinDuplicateTargetInspection : MixinInspection() {
         override fun visitClass(psiClass: PsiClass) {
             val mixinAnnotation = psiClass.modifierList?.findAnnotation(MIXIN) ?: return
 
-            if (psiClass.mixinTargets.size != psiClass.mixinTargets.distinct().size) {
-                goOverValues(psiClass, mixinAnnotation)
-                goOverTargets(psiClass, mixinAnnotation)
+            val mixinTargets = psiClass.mixinTargets
+
+            if (mixinTargets.size != mixinTargets.distinct().size) {
+                val nonDuplicates = mutableListOf<ClassNode>()
+                for (i in mixinTargets.indices) {
+                    val mixinTarget = mixinTargets[i]
+                    if (mixinTarget !in mixinTargets.subList(
+                            i + 1, mixinTargets.size
+                        ) && mixinTarget !in mixinTargets.subList(0, i)
+                    ) {
+                        nonDuplicates.add(mixinTarget)
+                    }
+                }
+
+                goOverValues(nonDuplicates, mixinAnnotation)
+                goOverTargets(psiClass, nonDuplicates, mixinAnnotation)
             }
         }
 
-        private fun goOverValues(psiClass: PsiClass, mixinAnnotation: PsiAnnotation) {
+        private fun goOverValues(nonDuplicates: List<ClassNode>, mixinAnnotation: PsiAnnotation) {
 
             // Read class targets (value)
             val value = mixinAnnotation.findDeclaredAttributeValue("value") ?: return
             if (value is PsiArrayInitializerMemberValue) {
-                val classesElements = value.children.filterIsInstance<PsiExpression>()
-                val classTargets = value.resolveClassArray()
-                for (classTargetIndex in classTargets.indices) {
-                    val classMixinTarget = classTargets[classTargetIndex]
-                    val classNode = findClassNodeByPsiClass(classMixinTarget)
+                val classElements = value.children.filterIsInstance<PsiExpression>()
+                for (classTargetIndex in classElements.indices) {
+                    val expression = classElements[classTargetIndex] as? PsiClassObjectAccessExpression ?: continue
+                    val targetPsiClass = expression.operand.type.resolve() ?: continue
+                    val targetClassNode = findClassNodeByPsiClass(targetPsiClass)
+
                     registerProblemIfProblematic(
-                        psiClass,
-                        classNode,
-                        classTargetIndex,
-                        classesElements[classTargetIndex]
+                        nonDuplicates,
+                        targetClassNode,
+                        expression,
+                        QuickFixFactory.getInstance().createDeleteFix(expression)
                     )
                 }
             } else {
                 val targetClass = value.resolveClass() ?: return
                 val classNode = findClassNodeByPsiClass(targetClass)
-                val elementToDelete = mixinAnnotation.parameterList.attributes.find { it.name == "value" } ?: value
-                registerProblemIfProblematic(psiClass, classNode, 0, elementToDelete)
+                val possibleQuickFix = RemoveDuplicateTargetFix(mixinAnnotation, "value")
+                registerProblemIfProblematic(nonDuplicates, classNode, value, possibleQuickFix)
             }
         }
 
-        private fun goOverTargets(psiClass: PsiClass, mixinAnnotation: PsiAnnotation) {
+        private fun goOverTargets(psiClass: PsiClass, nonDuplicates: List<ClassNode>, mixinAnnotation: PsiAnnotation) {
             // Read string targets (targets)
             val targets = mixinAnnotation.findDeclaredAttributeValue("targets") ?: return
             val classTargetNames = targets.computeStringArray()
-            val valueTargetCount = mixinAnnotation.findDeclaredAttributeValue("value")?.resolveClassArray()?.size ?: 0
             if (targets is PsiArrayInitializerMemberValue) {
-
                 val classChildren = targets.children.filterIsInstance<PsiExpression>()
 
-                for (i in classTargetNames.indices) {
-                    val targetName = classTargetNames[i]
+                // TODO: may be misaligned if there are numbers for example in the class array because they will have different lengths
+                for (classTargetIndex in classTargetNames.indices) {
+                    val targetName = classTargetNames[classTargetIndex]
 
                     val classNode = findClassNodeByQualifiedName(
                         psiClass.project,
                         psiClass.findModule(),
                         targetName.replace('/', '.'),
                     )
-                    registerProblemIfProblematic(psiClass, classNode, valueTargetCount + i, classChildren[i])
+                    registerProblemIfProblematic(
+                        nonDuplicates,
+                        classNode,
+                        classChildren[classTargetIndex],
+                        QuickFixFactory.getInstance().createDeleteFix(classChildren[classTargetIndex])
+                    )
                 }
             } else {
-                if (targets.constantStringValue == null) return
+                val stringValue = targets.constantStringValue ?: return
                 val classNode = findClassNodeByQualifiedName(
                     psiClass.project,
                     psiClass.findModule(),
-                    targets.constantStringValue!!.replace('/', '.'),
+                    stringValue.replace('/', '.'),
                 )
-                val elementToDelete = mixinAnnotation.parameterList.attributes.find { it.name == "targets" } ?: targets
-                registerProblemIfProblematic(psiClass, classNode, valueTargetCount, elementToDelete)
+                val removeDuplicateTargetFix = RemoveDuplicateTargetFix(mixinAnnotation, "targets")
+                registerProblemIfProblematic(nonDuplicates, classNode, targets, removeDuplicateTargetFix)
             }
         }
 
-        private fun isClassNodeInTargets(
-            psiClass: PsiClass,
-            classNodeToCheck: ClassNode?,
-            indexToIgnore: Int
-        ): Boolean {
-            return classNodeToCheck in psiClass.mixinTargets.subList(0, indexToIgnore) ||
-                classNodeToCheck in psiClass.mixinTargets.subList(indexToIgnore + 1, psiClass.mixinTargets.size)
-        }
-
-        private fun registerProblemForDuplicate(duplicateExpression: PsiElement) {
+        private fun registerProblemForDuplicate(duplicateExpression: PsiElement, quickFix: LocalQuickFix) {
             holder.registerProblem(
                 duplicateExpression,
                 "Duplicate target is redundant",
-                QuickFixFactory.getInstance().createDeleteFix(duplicateExpression)
+                quickFix,
             )
         }
 
         private fun registerProblemIfProblematic(
-            psiClass: PsiClass,
+            nonDuplicates: List<ClassNode>,
             classNode: ClassNode?,
-            indexToIgnore: Int,
-            possibleDuplicate: PsiElement
+            possibleDuplicate: PsiElement,
+            possibleQuickFix: LocalQuickFix
         ) {
-            if (isClassNodeInTargets(psiClass, classNode, indexToIgnore)) {
-                registerProblemForDuplicate(possibleDuplicate)
+            if (classNode != null && classNode !in nonDuplicates) {
+                registerProblemForDuplicate(possibleDuplicate, possibleQuickFix)
             }
+        }
+    }
+
+    private class RemoveDuplicateTargetFix(annotation: PsiAnnotation, val annotationAttributeName: String) :
+        LocalQuickFixAndIntentionActionOnPsiElement(annotation) {
+
+        override fun getFamilyName() = "Remove duplicate target"
+
+        override fun getText() = familyName
+
+        override fun invoke(
+            project: Project,
+            file: PsiFile,
+            editor: Editor?,
+            startElement: PsiElement,
+            endElement: PsiElement
+        ) {
+            val annotation = startElement as? PsiAnnotation ?: return
+            annotation.setDeclaredAttributeValue(annotationAttributeName, null)
         }
     }
 }
