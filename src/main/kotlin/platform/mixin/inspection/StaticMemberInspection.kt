@@ -25,6 +25,7 @@ import com.demonwav.mcdev.platform.mixin.util.MixinConstants.Annotations.INVOKER
 import com.demonwav.mcdev.platform.mixin.util.MixinConstants.Annotations.OVERWRITE
 import com.demonwav.mcdev.platform.mixin.util.MixinConstants.Annotations.SHADOW
 import com.demonwav.mcdev.platform.mixin.util.isMixin
+import com.demonwav.mcdev.util.findKeyword
 import com.intellij.codeInsight.intention.QuickFixFactory
 import com.intellij.codeInspection.ProblemsHolder
 import com.intellij.psi.JavaElementVisitor
@@ -33,6 +34,7 @@ import com.intellij.psi.PsiField
 import com.intellij.psi.PsiMember
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.PsiModifier
+import org.jetbrains.kotlin.j2k.accessModifier
 
 class StaticMemberInspection : MixinInspection() {
 
@@ -55,7 +57,7 @@ class StaticMemberInspection : MixinInspection() {
         private fun visitMember(member: PsiMember) {
             if (isProblematic(member)) {
                 holder.registerProblem(
-                    member,
+                    member.modifierList?.findKeyword(member.accessModifier()) ?: member,
                     "Non-private static members are not allowed in Mixin classes",
                     QuickFixFactory.getInstance().createModifierListFix(member, PsiModifier.PRIVATE, true, false),
                 )
