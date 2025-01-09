@@ -34,7 +34,6 @@ import com.intellij.psi.PsiField
 import com.intellij.psi.PsiMember
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.PsiModifier
-import org.jetbrains.kotlin.j2k.accessModifier
 
 class StaticMemberInspection : MixinInspection() {
 
@@ -56,8 +55,14 @@ class StaticMemberInspection : MixinInspection() {
 
         private fun visitMember(member: PsiMember) {
             if (isProblematic(member)) {
+                val accessModifier = when {
+                    member.hasModifierProperty(PsiModifier.PUBLIC) -> PsiModifier.PUBLIC
+                    member.hasModifierProperty(PsiModifier.PROTECTED) -> PsiModifier.PROTECTED
+                    member.hasModifierProperty(PsiModifier.PRIVATE) -> PsiModifier.PRIVATE
+                    else -> PsiModifier.PACKAGE_LOCAL
+                }
                 holder.registerProblem(
-                    member.modifierList?.findKeyword(member.accessModifier()) ?: member,
+                    member.modifierList?.findKeyword(accessModifier) ?: member,
                     "Non-private static members are not allowed in Mixin classes",
                     QuickFixFactory.getInstance().createModifierListFix(member, PsiModifier.PRIVATE, true, false),
                 )
